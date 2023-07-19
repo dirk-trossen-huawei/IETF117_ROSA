@@ -1,0 +1,28 @@
+Side meeting@IETF117
+====================
+
+Time: Monday 24th, 2023 from 6.30 to 8.00pm PST
+
+Location: Continental 2-3
+
+Online: TBD
+
+Conference
+
+Moderator: Luigi Iannone (Huawei)
+
+Title: Routing on Service Addresses (ROSA): What, Why, Whereto?
+
+Agenda:
+T    - T+5  : Introduction: why being here, agenda bashing (Luigi Iannone, Huawei)
+
+T+5  - T+20 : Use Case 1: Content distribution and CDN interconnect (Luis Contreras, Telefonica)
+
+T+20 - T+35 : Use Case 2: Web browsing (Paulo Mendes, Airbus)
+
+T+35 - T+55 : Problem statement for ROSA and how current solutions fall short (Dirk Trossen, Huawei)
+  Stress the key issues, particularly dynamicity of relations, and provide overview on gap analysis
+
+T+55 - T+80 : Requirements and Blueprint for an approach (Dirk Trossen, Huawei)
+
+T+80 - T+90 : Whereto Next? (Luigi Iannone, Huawei)

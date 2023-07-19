@@ -1,0 +1,1736 @@
+
+
+
+
+Network Working Group                                         D. Trossen
+Internet-Draft                                       Huawei Technologies
+Intended status: Standards Track                           LM. Contreras
+Expires: 5 January 2024                                       Telefonica
+                                                          J. Finkhaeuser
+                                                           Interpeer gUG
+                                                               P. Mendes
+                                                                  Airbus
+                                                             4 July 2023
+
+
+             Architecture for Routing on Service Addresses
+                    draft-trossen-rtgwg-rosa-arch-01
+
+Abstract
+
+   The term 'service-based routing' (SBR) captures the set of mechanisms
+   for the steering of traffic in an application-level service scenario.
+   As in the related use case and gap analysis drafts, we position this
+   steering as an anycast problem, requiring the selection of one of the
+   possibly many choices for service execution at the very start of a
+   service transaction.
+
+   This document outlines a possible architecture for realizing SBR so
+   as to address the issues identified in the use case and gap analysis
+   companion documents, specifically aiming at the realization of the
+   requirements in the latter document.  We outline the architecture,
+   with pointers to possible realizations of the interactions, while
+   also outlining possible extensions to a base SBR capability through a
+   ROSA system as an outlook to possible richer capabilities.
+
+Status of This Memo
+
+   This Internet-Draft is submitted in full conformance with the
+   provisions of BCP 78 and BCP 79.
+
+   Internet-Drafts are working documents of the Internet Engineering
+   Task Force (IETF).  Note that other groups may also distribute
+   working documents as Internet-Drafts.  The list of current Internet-
+   Drafts is at https://datatracker.ietf.org/drafts/current/.
+
+   Internet-Drafts are draft documents valid for a maximum of six months
+   and may be updated, replaced, or obsoleted by other documents at any
+   time.  It is inappropriate to use Internet-Drafts as reference
+   material or to cite them other than as "work in progress."
+
+   This Internet-Draft will expire on 5 January 2024.
+
+
+
+
+Trossen, et al.          Expires 5 January 2024                 [Page 1]
+
+Internet-Draft                    ROSA                         July 2023
+
+
+Copyright Notice
+
+   Copyright (c) 2023 IETF Trust and the persons identified as the
+   document authors.  All rights reserved.
+
+   This document is subject to BCP 78 and the IETF Trust's Legal
+   Provisions Relating to IETF Documents (https://trustee.ietf.org/
+   license-info) in effect on the date of publication of this document.
+   Please review these documents carefully, as they describe your rights
+   and restrictions with respect to this document.  Code Components
+   extracted from this document must include Revised BSD License text as
+   described in Section 4.e of the Trust Legal Provisions and are
+   provided without warranty as described in the Revised BSD License.
+
+Table of Contents
+
+   1.  Introduction  . . . . . . . . . . . . . . . . . . . . . . . .   3
+     1.1.  Summary of ROSA Design  . . . . . . . . . . . . . . . . .   3
+     1.2.  Overview of Draft . . . . . . . . . . . . . . . . . . . .   5
+   2.  Terminology . . . . . . . . . . . . . . . . . . . . . . . . .   6
+   3.  ROSA Design . . . . . . . . . . . . . . . . . . . . . . . . .   7
+     3.1.  System Overview . . . . . . . . . . . . . . . . . . . . .   7
+     3.2.  Examples of Possible Message Types  . . . . . . . . . . .  10
+     3.3.  Changes to Clients to Support ROSA  . . . . . . . . . . .  12
+     3.4.  SAR Forwarding Engine . . . . . . . . . . . . . . . . . .  13
+     3.5.  Traffic Steering  . . . . . . . . . . . . . . . . . . . .  17
+       3.5.1.  Ingress Request Scheduling  . . . . . . . . . . . . .  18
+       3.5.2.  Routing Across Multiple SARs  . . . . . . . . . . . .  19
+     3.6.  Interconnection . . . . . . . . . . . . . . . . . . . . .  21
+   4.  Extensions to Base ROSA Capabilities  . . . . . . . . . . . .  22
+     4.1.  Supporting Different Namespace Encodings  . . . . . . . .  22
+     4.2.  Supporting Multi-Homing of Service Instances  . . . . . .  23
+     4.3.  Supporting 0-RTT TLS  . . . . . . . . . . . . . . . . . .  23
+     4.4.  Supporting Transaction Mobility . . . . . . . . . . . . .  24
+     4.5.  Supporting Service Function Chaining  . . . . . . . . . .  24
+     4.6.  Supporting Privacy-Compliant Communication  . . . . . . .  24
+   5.  Prototype-based Insights  . . . . . . . . . . . . . . . . . .  25
+   6.  Open Issues . . . . . . . . . . . . . . . . . . . . . . . . .  25
+   7.  Conclusions . . . . . . . . . . . . . . . . . . . . . . . . .  25
+   8.  Security Considerations . . . . . . . . . . . . . . . . . . .  26
+   9.  Privacy Considerations  . . . . . . . . . . . . . . . . . . .  27
+   10. IANA Considerations . . . . . . . . . . . . . . . . . . . . .  27
+   11. Acknowledgements  . . . . . . . . . . . . . . . . . . . . . .  27
+   12. Informative References  . . . . . . . . . . . . . . . . . . .  27
+   Authors' Addresses  . . . . . . . . . . . . . . . . . . . . . . .  31
+
+
+
+
+
+
+Trossen, et al.          Expires 5 January 2024                 [Page 2]
+
+Internet-Draft                    ROSA                         July 2023
+
+
+1.  Introduction
+
+   As noted already in [I-D.mendes-rtgwg-rosa-use-cases], we can
+   recognize a growing proliferation of serverless service provisioning
+   methods that allow for dynamically deploying service endpoints, not
+   just in centralized data centres but distributed across network
+   locations and end devices, including those provided by end users
+   directly.
+
+   As identified in [I-D.mendes-rtgwg-rosa-use-cases], the key problem
+   in providing services in a distributed setting is that of mapping an
+   application level identifier, e.g., a domain name, to a routing
+   locator under which the device hosting a service could be reached.
+   We refer to this as 'service-based routing' (SBR).  As further
+   identified in [I-D.mendes-rtgwg-rosa-use-cases], a key problem to SBR
+   is the possible latency that may incur for such mapping operation,
+   while also enabling dynamic updates to the mapping result, possibly
+   constrained by service-specific policies.
+
+   Overall, we characterize SBR in an environment that makes use of,
+   possibly virtualized and distributed service endpoints in several
+   network locations, as needing to make any anycast decision, selecting
+   one out of possibly many choices for the service endpoint, where such
+   choice may change frequently.
+
+   In the remainder of this document, we present an architecture for
+   such anycast decision method, addressing the key issues outlined in
+   [I-D.mendes-rtgwg-rosa-use-cases] in an approach we term 'routing on
+   service addresses', or ROSA in short.  In summary to the issues
+   identified in [I-D.mendes-rtgwg-rosa-use-cases], the main design
+   goals for ROSA can be identified as (i) supporting the need for
+   'dynamicity' for the anycast decision, (ii) providing the required
+   'efficiency' of the anycast decision to improve on existing explicit
+   resolution methods (and their incurring latency through the required
+   resolution step) as well as (iii) enable the 'service specificity' of
+   the anycast decision.
+
+1.1.  Summary of ROSA Design
+
+   The key approach to Routing on Service Addresses (ROSA) is to replace
+   the usual DNS+IP sequence, i.e., the off-path discovery of service
+   name to IP locator mapping, through an in-band discovery to a
+   suitable service instance location for a selected set of services,
+   not all Internet-based services, followed by the usual direct client-
+   service transfer using existing IP-based data path solutions.
+
+   With this in mind, the basic functionality of ROSA can be described
+   as follows:
+
+
+
+Trossen, et al.          Expires 5 January 2024                 [Page 3]
+
+Internet-Draft                    ROSA                         July 2023
+
+
+   1.  A client sends an initial packet, 'directed' to service address
+       S, to a special shim (ROSA) overlay.
+
+   2.  The shim overlay routes the packet based on the service address
+       to one of the possibly many service instances for S over an
+       existing IP network.  For this, mappings between S and the known
+       service instance locators are used by the ROSA overlay, replacing
+       the role of DNS records, while the selection of the 'suitable'
+       service instance locator may use service-specific policies (and
+       parameters).
+
+   3.  The chosen service instance delivers its network locator SI in
+       the response to the initial packet back to the client.
+
+   4.  The client will now continue to use SI in native IPv6 packets to
+       direct any subsequent packets to the chosen service instance.
+       This is to support possible ephemeral state created at service
+       instance as a consequence of previous exchanges.
+
+   Steps 1 through 4 are repeated for every new service transaction,
+   allowing those transactions now to be served at any of the available
+   service instances albeit keeping one transaction at one chosen
+   service instance!  Steps 1 through 4 may also be repeated in case of
+   mobility.  For stateless services, only steps 1, 2, and 3 are
+   executed.
+
+   In order to react to system, e.g., network but more importantly
+   service changes, ROSA achieves dynamicity, as mentioned in the
+   previous section, by employing a routing-based approach able to map
+   service addresses to routing locators, where mappings of service
+   addresses to routing locators are pushed to the (shim overlay)
+   elements, enabling to perform the translation from a service
+   addressed packet to an IP-addressed packet on the data path.  When
+   using, e.g., eBPF-based techniques in SW-based routers, such approach
+   can achieve 100s of thousands of resolution steps per ingress node,
+   as discussed in Section 5.
+
+   The above functionality may be realized at various layers, which a
+   wider architectural discussion on ROSA will need to investigate
+   further.  For instance, one could apply the above capability through
+   an application layer protocol, such as HTTP, akin to what ALTO
+   proposes (or as an extension to ALTO solutions).  Alternatively,
+   methods developed by the MASQUE WG could be used (and suitably
+   extended) to employ a transport level realization of the in-band
+   functionality.
+
+
+
+
+
+
+Trossen, et al.          Expires 5 January 2024                 [Page 4]
+
+Internet-Draft                    ROSA                         July 2023
+
+
+   While we do not intend to pre-empt any conclusion of this
+   architectural debate, we intend to outline an example design in this
+   document that provides what we see as the lowest possible layer
+   realization.  Specifically, we outline the realization at L3.5,
+   employing an IPv6 extension header based approach.  This approach
+   preserves a key assumption for a realization of the above
+   functionality, namely to be realized as an overlay, thus not being
+   linked into necessary ISP-level deployments, but operate akin to
+   choosing your DNS server at the client, thus fostering the possible
+   privacy of communication between clients and a set of services.
+
+   Furthermore, we believe that this chosen level of realization allows
+   for the broadest support for transport and application protocols
+   alike since the initial IP packet, realizing the in-band resolution
+   step, can include upper layer, i.e., transport and/or application-
+   level, data within the normal payload of the IP packet, achieving the
+   desired removal of the explicit resolution step as we use today
+   through the additional EH content.
+
+   Additionally, similar to application-level solutions, the positioning
+   as a (L3.5) shim overlay facilitates the exposure of service-specific
+   selection policies from the service to a ROSA provider through
+   explicit commercial relations, separate from those defining the
+   routing policies in the underlay network.
+
+   Unlike deploying name-based routing solutions at the underlay,
+   scalability here is achieved by limiting the resolution to those
+   services explicitly announced to the service routing (i.e., ROSA)
+   overlay.  Thus, ROSA does not aim to replace ALL service routing
+   through the above proposed steps, but focus on those services
+   explicitly announcing their desire for a ROSA-based resolution to an
+   appropriate ROSA provider.  The assumed explicit (often commercial)
+   relationship between the service provider and the ROSA provider is
+   what allows for controlling the scalability requirements of the
+   elements realizing the ROSA overlay.
+
+1.2.  Overview of Draft
+
+   In the remainder of this document, we first introduce in Section 2 a
+   terminology that provides the common language used for the wider ROSA
+   work.  We then outline the design in Section 3 with possible
+   extensions to this basic design discussed in Section 4, leaving space
+   for insights from an early implementation of such design in
+   Section 5.
+
+
+
+
+
+
+
+Trossen, et al.          Expires 5 January 2024                 [Page 5]
+
+Internet-Draft                    ROSA                         July 2023
+
+
+2.  Terminology
+
+   The following terminology is used throughout the remainder of this
+   document:
+
+   Service:  A monolithic functionality that is provided according to
+      the specification for said service.
+
+   Composite Service:  A composite service can be built by orchestrating
+      a combination of monolithic (or other composite) services.  From a
+      client perspective, a monolithic or composite nature cannot be
+      determined, since both will be identified in the same manner for
+      the client to access.
+
+   Service Instance:  A running environment (e.g., a node, a virtual
+      instance) that provides the expected service.  One service can
+      involve several instances running within the same ROSA network at
+      different network locations.
+
+   Service Address:  An identifier for a specific service.
+
+   Service Instance Address:  A locator for a specific service instance.
+
+   Service Request:  A request for a specific service, addressed to a
+      specific service address, which is directed to at least one of
+      possibly many service instances.
+
+   Affinity Request:  A request to a specific service, following an
+      initial service request, requiring steering to the same service
+      instance chosen for the initial service request.
+
+   Service Transaction:  A sequence of higher-layer requests for a
+      specific service, consisting of at least one service request,
+      addressed to the service address, and zero or more affinity
+      requests.
+
+   Service Affinity:  Preservation of a relationship between a client
+      and one service instance, with the initial service request
+      creating said affinity and following affinity requests utilizing
+      said affinity.
+
+   ROSA Provider:  Realizing the ROSA-based traffic steering
+      capabilities over at least one infrastructure provider by
+      deploying and operating the ROSA components within its defining
+      ROSA domain.
+
+   ROSA Domain:  Domain of reachability for services supported by a
+      single ROSA provider.
+
+
+
+Trossen, et al.          Expires 5 January 2024                 [Page 6]
+
+Internet-Draft                    ROSA                         July 2023
+
+
+   ROSA Endpoint:  A node accessing or providing one or more services
+      through one or more ROSA providers.
+
+   ROSA Client:  A ROSA endpoint accessing one or more services through
+      one or more ROSA providers, thus issuing services requests
+      directed to one of possible many service instances that have
+      previously announced the service address provided by the ROSA
+      client in the service request.
+
+   Service Address Router (SAR):  A node supporting the operations for
+      steering service requests to one of possibly many service
+      instances, following the procedures outlined in Section 3.5.
+
+   Service Address Gateway (SAG):  A node supporting the operations for
+      steering service requests to service addresses not announced to
+      SARs of the same ROSA domain to suitable endpoints in the Internet
+      or within other ROSA domains.
+
+3.  ROSA Design
+
+   This section outlines the design of a shim layer relying upon IPv6 to
+   provide routing on service addresses (ROSA).  It first outlines the
+   system overview, before outlining the possible interfaces to the IP
+   layer (Section 3.2 and applications in ROSA endpoints (Section 3.3),
+   followed with the various operational methods of ROSA in terms of
+   forwarding operations (Section 3.4), traffic steering methods
+   (Section 3.5), and interconnection (Section 3.6).
+
+3.1.  System Overview
+
+   Figure 1 illustrates a ROSA domain, interconnected to other ROSA-
+   supporting domains via the public Internet through the Service
+   Address Gateway (SAG), where a ROSA domain may span one or more IPv6
+   underlay domain.  Section 3.6 provides more detail on how to achieve
+   interconnection between ROSA domains.
+
+   ROSA is positioned as a shim overlay atop IPv6, using Extension
+   headers that carry the suitable information for routing and
+   forwarding the ROSA service requests, unlike [I-D.eip-arch] which
+   proposes to include extension processing directly into the transport
+   network.
+
+
+
+
+
+
+
+
+
+
+Trossen, et al.          Expires 5 January 2024                 [Page 7]
+
+Internet-Draft                    ROSA                         July 2023
+
+
+                          +-----------+  +-----------+   +-------+
+                          +service.org+  +service.org+   +foo.com|
+                          +----+------+  +-------+---+   +----+--+
+                               |                 |            |
+          +-----------+   +----+-+           +----+-----------+--+
+          +service.org+---+DC Net|           |       DC Net      |
+          +-----------+   +---+--+           +-------------+-----+
+                             |                             |
+                           +-+--+                        +-+--+
+                     +-----+SAR4|                        |SAR5|
+                     |     +-+--+                        +-+--+
+   +------+        +-+--+                 +----+           |
+   +Client+--------+SAR1+-------------+   +SAR6+           |
+   +------+        +----+             |   +-+--+           |
+                                      |     |              |
+   +------+        +----+            ++-----+----+         |
+   +Client+--------+SAR2+------------+IPv6 Net(s)+---------+
+   +------+        +----+            +---+--+----+            (----)
+                                         |  |                (      )
+   +------------------+        +----+    |  |    +----+     (  Other )
+   +MyMobile.org/video+--------+SAR3+----+  +----+SAG1+----(  Domains )
+   +------------------+        +----+            +----+     (        )
+                                                             (------)
+
+   SAR: Service Address Router
+   SAG: Service Address Gateway
+
+
+
+                       Figure 1: ROSA System Overview
+
+   ROSA endpoints start with discovering their ingress Service Address
+   Router (SAR), e.g., through DHCP extensions or through utilizing the
+   Session Management Function (SMF) in 5G networks [TS23501].  An
+   endpoint may discover several ingress SARs for different categories
+   of services, each SAR being part of, e.g., a category-specific ROSA
+   overlay, which in turn may be governed by different routing policies
+   and differ in deployment (size and capacity).  The category discovery
+   mechanism may be subject to specific deployments of ROSA and thus is
+   likely outside the scope of this document at this point.
+
+   Services are realized by service instances, possibly at different
+   network locations.  Those instances expose their availability to
+   serve requests through announcing the service address of their
+   service to their ingress SAR, which in turn distributes suitable ROSA
+   routing state across the SARs in its domain.  The lacking tie of
+   service addresses to the network topology, and thus the lacking
+   possibility to aggregate relationships of service addresses to
+
+
+
+Trossen, et al.          Expires 5 January 2024                 [Page 8]
+
+Internet-Draft                    ROSA                         July 2023
+
+
+   routing locators, poses a scalability challenge (specifically to
+   address Req 2.a in Section 3.4) However, the routing tables in ROSA
+   are bounded by the number of services explicitly announcing their
+   service to ingress SARs, while utilizing explicit interconnection
+   (see Section 3.6) to other ROSA domains or the Internet for any
+   service requested in the domain that has not previously been
+   announced.
+
+   To invoke a service, a ROSA client sends an initial request,
+   addressed to a service, to its ingress SAR, which in turn steers the
+   request (possibly via other SARs) to one of possibly many service
+   instances.  See Section 3.4 for the required SAR-local forwarding
+   operations and end-to-end message exchange and Section 3.3 for the
+   needed changes to ROSA clients.  Conversely, non-ROSA services may
+   continue to be invoked using existing means for service routing, such
+   as DNS, GSLB, Alto and others.
+
+   We refer to initial requests as 'service requests'.  If an overall
+   service transaction creates ephemeral state, the client may send
+   additional requests to the service instance chosen in the (preceding)
+   service request; we refer to those as 'affinity requests'.  With
+   this, routing service requests (over the ROSA network) can be
+   positioned as on-path service discovery (winth in-band data),
+   contrasted against explicit, often off-path solutions such as the
+   DNS.
+
+   In order to support transactions across different service instances,
+   e.g., within a single DC, a sessionID may be used, as suggested in
+   [SOI2020].  Unlike [SOI2020], discovery does not include mapping
+   abstract service classes onto specific service addresses, avoiding
+   semantic knowledge to exist in the ROSA shim layer for doing so.
+
+   With the above, we can outline the following design principles that
+   guide the development for the solutions described next:
+
+   *  Service addresses have unique meaning only in the overlay network.
+
+   *  Service instance IP addresses have meaning only in the underlay
+      networks, over which the ROSA domain operates.
+
+   *  SARs map service addresses to the IP addresses for the next hop to
+      send the service request to, finally directed to the service
+      instance IP address.
+
+   *  Within the underlay network, service instance IP addresses have
+      both locator and identifier semantics.
+
+
+
+
+
+Trossen, et al.          Expires 5 January 2024                 [Page 9]
+
+Internet-Draft                    ROSA                         July 2023
+
+
+   *  A service address within a ROSA domain carries both identifier and
+      locator semantics to other nodes within that domain but also other
+      ROSA domains (through the interconnection methods shown in
+      Section 3.6).
+
+   *  Affinity requests directly utilize the underlay networks, based on
+      the relationships build during the service request handling phase.
+
+   We can recognize similarities of these principles with those outlined
+   for the Locator Identifier Separation Protocol (LISP) in [RFC9299]
+   albeit extended with using direct IP communication for longer service
+   transactions.
+
+3.2.  Examples of Possible Message Types
+
+   Apart from affinity requests, which utilize standard IPv6 packet
+   exchange between the client and the service instance selected through
+   the initial service request, ROSA introduces three new message types.
+   Here, we present example encodings, shown in Figure 2.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+Trossen, et al.          Expires 5 January 2024                [Page 10]
+
+Internet-Draft                    ROSA                         July 2023
+
+
+     +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+     |  Next Header  |  Hdr Ext Len  |                               |
+     +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+                               +
+     |    Instance=IP                                                |
+     |    Service=ID                                                 |
+     |    Constraint=txt                                             |
+     +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+       Service Announcement
+
+     +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+     |  Next Header  |  Hdr Ext Len  |                               |
+     +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+                               +
+     |    Client=IP                                                  |
+     |    Ingress=IP                                                 |
+     |    Service=ID                                                 |
+     |    Port=port                                                  |
+     +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+       Service Request
+
+     +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+     |  Next Header  |  Hdr Ext Len  |                               |
+     +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+                               +
+     |    Client=IP                                                  |
+     |    Ingress=IP                                                 |
+     |    Service=ID                                                 |
+     |    Port=port                                                  |
+     |    Instance=IP                                                |
+     +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+       Service Response
+
+
+                        Figure 2: ROSA message types
+
+   Given the overlay nature of ROSA, clients, SARs, and service
+   instances are destinations in the IPv6 underlay of the network
+   domains that the overlay spans across.  This is unlike approaches
+   such as [I-D.huang-service-aware-network-framework], which place the
+   service address into the destination address of the respective IPv6
+   header field, although [I-D.ma-intarea-encapsulation-of-san-header]
+   also foresees the encapsulation into the IPv6 EH, as suggested here.
+
+   Istead, we propose to use the destination option EH [RFC8200], where
+   Figure 2 shows the options carried, proposed here as using a TLV
+   format for the extension header with Concise Binary Object
+   Representation (CBOR) [RFC8949] being studied as an alternative.  The
+   EH entries shown are populated at the client and service instance,
+   while read at traversing SARs.
+
+
+
+
+Trossen, et al.          Expires 5 January 2024                [Page 11]
+
+Internet-Draft                    ROSA                         July 2023
+
+
+   A service address is encoded through a hierarchical naming scheme,
+   e.g., using [RFC8609].  Here, service addresses consist of
+   components, mapping existing naming hierarchies in the Internet onto
+   those over which to forward packets, illustrated in the forwarding
+   information base (FIB) of Figure 3 as illustrative URLs.  With
+   components treated as binary objects, the hierarchical structure
+   allows for prefix-based grouping of addresses, reducing routing table
+   size, while the explicit structure allows for efficient hash-based
+   lookup during forwarding operations, unlike IP addresses which
+   require either log(n) radix tree search software or expensive TCAM
+   hardware solutions.
+
+   Note that other encoding approaches could be used, such as hashing
+   the service name at the ROSA endpoint or assigning a service address
+   through a mapping system, such as the DNS, but this would require
+   either additional methods, e.g., for hash conflict management or
+   name-address mapping management, which lead to more complexity.
+
+   With the service announcement message, a service instance signals
+   towards its ingress SAR its ability to serve requests for a specific
+   service address.  Section 3.5 outlines the use of this message in
+   routing or scheduling-based traffic steering methods.
+
+   The service request message is originally sent by a client to its
+   ingress SAR, which in turn uses the service address provided in the
+   extension header to forward the request, while the selected service
+   instance provides its own IP locator as an extension header entry in
+   the service response.  In addition to the service address, suitable
+   port information is being provided (through upper layer protocols),
+   allowing to associate future affinity requests with their initial
+   service requests.
+
+   The next section describes the SAR-local forwarding operations and
+   the end-to-end message exchange that uses the extension header
+   information for traversing the ROSA network, while Section 3.6
+   outlines the handling of service addresses that have not been
+   previously announced within the client-local ROSA domain.
+
+3.3.  Changes to Clients to Support ROSA
+
+   Within endpoints, the ROSA functionality is realized as a shim layer
+   atop IPv6 and below transport protocols.  For this, endpoints need
+   the following adjustments to support ROSA:
+
+   *  Adapting network layer interface: Introducing service addresses
+      requires changes for discovering the ingress SAR and issuing
+      service requests as well as maintaining affinity to a particular
+      service instance.  This could be achieved by providing a new
+
+
+
+Trossen, et al.          Expires 5 January 2024                [Page 12]
+
+Internet-Draft                    ROSA                         July 2023
+
+
+      address type (e.g., ADDR_SA) at the socket interface, linking the
+      service address to the returned handle, while utilizing socket
+      options to assign constraints to receiving sockets, utilized in
+      the announcement of the service address.  New sockets may be
+      provided, at least for initial rollouts, though user space
+      libraries, while alternatively, a UDP-based, encapsulation of
+      traffic to the ingress SAR could be used.
+
+   *  Transport protocol integration: Our design aligns with existing
+      transport protocols, like TCP or QUIC, albeit with changes
+      required to utilize the new service address type.  Typical
+      handshakes, particularly for transport security, align well with
+      the initial service request message exchange, before affinity
+      requests would send the actual (now possibly encrypted) payload.
+
+   *  Changes to application protocols: The most notable change for
+      application protocols, like HTTP, would be to bypass the DNS for
+      resolving service names, using instead the aforementioned
+      different (service) socket type.  These adaptions are, however,
+      entirely internal to the protocol implementation.  Given the ROSA
+      deployment alongside existing IP protocols, those changes to
+      clients can happen gradually or driven through (e.g., edge SW)
+      platforms.
+
+3.4.  SAR Forwarding Engine
+
+   The SAR operations are typical for an EH-based IPv6 forwarding node:
+   an incoming service request or response is delivered to the SAR
+   forwarding engine, parsing the EH for relevant information for the
+   forwarding decision, followed by a lookup on previously announced
+   service addresses, and ending with the forwarding action.
+
+   Figure 3 shows a schematic overview of the forwarding engine with the
+   forwarding information base (FIB) and the next hop information base
+   (NHIB) as main data structures.  The NHIB is managed through a
+   routing protocol, see Section 3.5, with entries leading to announced
+   services.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+Trossen, et al.          Expires 5 January 2024                [Page 13]
+
+Internet-Draft                    ROSA                         July 2023
+
+
+   incoming service request/response
+   -------------------------------------||             Next Hop
+                                        \/        Information Base
+   Forwarding Information Base     +----------+   +-+--------+----+
+   +------------------+--------+   |EH parsing|   |#|Next Hop|Cost|
+   |Service address   |Next Hop|   +----||----+   |#|   IP   |Cost|
+   +------------------+--------+        \/        +-+--------+----+
+   | service.org      | 4, 5, 0|   +----------+   |0|  SAR5  | 2  |
+   +------------------+--------+   |   SAR    |   +-+--------+----+
+   | foo.com          | 1      |-->|Forwarding|   |1|  SAR6  | 1  |
+   +------------------+--------+   | Decision |   +-+--------+----+
+   |MyMobile.org/video| 2      |   +----||----+   |2|  SAR2  | 4  |
+   +------------------+--------+        \/        +-+--------+----+
+   | *                | 3      |   +----------+   |3|  SAR1  | 2  |
+   +------------------+--------+   |   SA/DA  |   +-+--------+----+
+                                   |Adjustment|<--|4|  SI1   | -  |
+                                   +----||----+   +-+--------+----+
+                                        \/        |5|  SI2   | -  |
+                                   +----------+   +-+--------+----+
+                                   |IP packet |
+                                   |forwarding|  Outgoing service
+                                   |  engine  |  request/response
+                                   +----------+------------------->
+
+
+                   Figure 3: SAR forwarding engine model
+
+   The FIB is dynamically populated by service announcements via the
+   intyer-SAR routing protocol, with the FIB including only one (ROSA
+   next hop) entry into the NHIB when using routing-based methods (rows
+   0 to 3 in Figure 3), described in Section 3.5.2.  Scheduling-based
+   solutions (see Section 3.5.1), however, may yield several dynamically
+   created entries into the NHIB (items 0, 4 and 5 in Figure 3, where
+   SI1 and SI2 represent the IPv6 address announced by the respective
+   service instances) as well as additional information needed for the
+   scheduling decision; those dynamic NHIB entries directly identify
+   service instances locations (or their egress as in item 0) and only
+   exist at ingress SARs towards ROSA clients.
+
+   We expect the number of forwarding entries to be limited by the
+   explicit relations service providers may have with their ROSA
+   provider.  In other words, we do not expect the FIB to include ALL
+   possible service names but those explicitly announcing their service
+   (and being authorized by the ROSA provider doing so).  In our use
+   cases of [I-D.mendes-rtgwg-rosa-use-cases], those services may be
+   very limited in numbers, particularly if we foresee dedicated ROSA
+   providers to aim at realizing those use cases.
+
+
+
+
+Trossen, et al.          Expires 5 January 2024                [Page 14]
+
+Internet-Draft                    ROSA                         July 2023
+
+
+   For a service request, a hash-based service address lookup (using the
+   Service EH entry) is performed, leading to next hop (NH) information
+   for the IPv6 destination address to forward to (the final destination
+   address at the last hop SAR will be the instance serving the service
+   request).
+
+   Forwarding the response utilizes the Client and Ingress EH fields,
+   where the latter is used by the service instance's ingress SAR to
+   forward the response to the client ingress SAR, while the former is
+   used to eventually deliver the response to the client by the client's
+   ingress SAR, ensuring proper firewall traversal of the response back
+   to the client.  We have shown in prototype realizations of ROSA that
+   the operations in Figure 3 can be performed using eBPF [eBPF]
+   extensions to Linux SW routers, while [SarNet2021] showed the
+   possibility a realizing a similar design using P4-based platforms.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+Trossen, et al.          Expires 5 January 2024                [Page 15]
+
+Internet-Draft                    ROSA                         July 2023
+
+
+   Client            Ingress              Service           Service
+                       SAR                Instance          Instance
+   (CIP)             (SAR IP)             (SI1 IP)          (SI2 IP)
+   ---------------------------------------------------------------------
+   ServiceRequest
+   (ClientIP,SAR IP)
+   (CIP, SAR IP, ServiceID)
+   --------------------->
+                         \ Determine ROSA
+                         / and, ultimately, IP Next Hop
+
+                         ServiceRequest
+                         (SAR IP, SI1 IP)
+                         (CIP, SAR IP, ServiceID)
+                         --------------------->
+                                               \ Generate
+                                               / Response
+                         ServiceResponse
+                         (SI1 IP, SAR IP)
+                         (CIP, SAR IP, ServiceID, SI1 IP)
+                         <---------------------
+
+
+   ServiceResponse
+   (SAR IP, CIP)
+   (CIP, SAR IP, ServiceID, SI1 IP)
+   <---------------------
+
+
+   AffinityRequest
+   (CIP, SI1 IP)
+   ------------------------------------------->
+                                               \ Generate
+                                               / Response
+   <-------------------------------------------
+
+
+                      Figure 4: ROSA message exchanges
+
+   Figure 4 shows the resulting end-to-end message exchange, using the
+   aforementioned SAR-local forwarding decisions.  We here show the IP
+   source and destination addresses in the first brackets and the
+   extension header information in the second bracket.
+
+   We can recognize two key aspects.  First, the SA/DA re-writing
+   happens at the SARs, using the EH-provided information on service
+   address, initial ingress SAR and client IP locators, as described
+   above.  Second, the selection of the service instance is signalled
+
+
+
+Trossen, et al.          Expires 5 January 2024                [Page 16]
+
+Internet-Draft                    ROSA                         July 2023
+
+
+   back to the client through the additional Instance EH field, which is
+   used for sending subsequent (affinity) requests via the IPv6 network.
+   As noted in the figure, when using transport layer security, the
+   service request and response will relate to the security handshake,
+   thereby being rather small in size, while the likely larger HTTP
+   transaction is sent in affinity requests.  As discussed in Section 8,
+   0-RTT handshakes may result in transactions being performed in
+   service request/response exchanges only.
+
+3.5.  Traffic Steering
+
+   Traffic steering in ROSA is applied to service requests for selecting
+   the service instance that may serve the request, while affinity
+   requests use existing IPv6 routing and any policies constraining
+   traffic steering in this part of the overall system.  At receiving
+   service endpoints, service provisioning platforms may use additional
+   methods to schedule incoming service requests to suitable resources
+   with the ingress point to the service provisioning platform being the
+   service endpoint for ROSA.
+
+   In the following, we outline two approaches for traffic steering.
+   The first uses ingress-based scheduling decisions to steer traffic to
+   one of the possible service instances for a given service address.
+   The second follows a routing-based model, determining a single
+   destination for a given service address using a routing protocol,
+   similar to what is suggested in
+   [I-D.huang-service-aware-network-framework].
+
+   We envision that some services may be steered through scheduling
+   methods, while others use routing approaches.  The indication which
+   one to apply may be derived from the number of next hop entries for a
+   service address.  In Figure 3, service.org uses a scheduling method
+   (with instances connected to SAR5 being exposed as a single instance
+   to ROSA, using DC-internal methods for scheduling incoming requests),
+   while the other services are routed via SARs.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+Trossen, et al.          Expires 5 January 2024                [Page 17]
+
+Internet-Draft                    ROSA                         July 2023
+
+
+   We furthermore envision an interface to exist between the ROSA
+   provider and the underlying network provider, exchanging routing
+   policy relation information.  The richness of this interface depends
+   on the specific business relation between both providers, i.e., the
+   ROSA and the network provider.  In integrated settings, where ROSA
+   and network provider may belong to the same commercial entity, this
+   interface may provide rich routing policy relation information, such
+   as network latency and bandwidth information, which in turn may be
+   used in the ROSA traffic steering decisions.  In other, more
+   disintegrated deployments, the information may entirely be limited to
+   SLA-level information with no specific runtime information exchanged
+   between both providers.  The exact nature of this interface remains
+   for further study.
+
+   Important here is that traffic steering is limited to a single ROSA
+   domain, i.e., traffic steering is not provided across instances of
+   the same service in different ROSA domains; traffic will always be
+   steered to (ROSA) domain-local instances only.
+
+3.5.1.  Ingress Request Scheduling
+
+   Traffic steering through explicit request scheduling follows an
+   approach similar to application- or transport-level solutions, such
+   as GSLB [GSLB], DNS over HTTPS [RFC8484], HTTP indirection [RFC7231]
+   or QUIC-LB [I-D.ietf-quic-load-balancers]: Traffic is routed to an
+   indirection point which directs the traffic towards one of several
+   possible destinations.
+
+   In ROSA, this indirection point is the client's ingress SAR.
+   However, unlike application or transport methods, scheduling is
+   realized in-band when forwarding service requests in the ingress SAR,
+   i.e., the original request is forwarded directly (not returned with
+   indirection information upon which the client will act), while
+   adhering to the affinity of a transaction by routing subsequent
+   requests in a transaction using the instance's IP address.
+   Scheduling commences to a possibly different instance with the start
+   of a new transaction.
+
+   For this, the ingress SAR's NHIB needs to hold information to ALL
+   announced service instances for a service address.  Furthermore, any
+   required information, e.g., capabilities or metric information, that
+   is used for the scheduling decision is signalled via the service
+   announcement, with (frequent) updates to existing announcements
+   possible.  Announcements for services following a scheduling- rather
+   than a routing-based steering approach carry suitably encoded
+   information in the Constraint field of the announcement's EH, leading
+   to announcements forwarded to client-facing ingress SARs without NHIB
+   entries stored in intermediary SARs.
+
+
+
+Trossen, et al.          Expires 5 January 2024                [Page 18]
+
+Internet-Draft                    ROSA                         July 2023
+
+
+   In addition, a scheduling decision needs to be realized in the SAR
+   forwarding decision step of Figure 3.  This may require additional
+   information to be maintained, such as instance-specific state,
+   further increasing the additional NHIB data to be maintained.
+   Examples for scheduling decisions are:
+
+   *  Random selection of one of the service instances for a given
+      service address, not requiring any additional state information
+      per service address.  Announcing the service instance is required
+      once.
+
+   *  Round robin, i.e., cycling through service instance choices with
+      every incoming service request, requiring to keep an internal
+      counter for the current position in the NHIB for the service
+      address.  Announcing the service instance is only required once.
+
+   *  Capability-based round robin: Cycle through service instances in
+      weighted round robin fashion with the weight (as additional
+      information in each NHIB entry) representing a capability, e.g.,
+      number of (normalized) compute resources committed to a service
+      instance.  Announcing the service instance requires an update when
+      capabilities change (e.g., during re-orchestration).  Weights
+      could be expressed as numerals, limiting the needed semantic
+      exposure of service provider knowledge and thereby supporting the
+      possible separation of service and communication network provider.
+      The solution in [CArDS2022] realises a compute-aware selection
+      through such decision.
+
+   *  Metric-based selection: Select service instance with lowest or
+      highest reported metric, such as load, requiring to keep
+      additional metric information per service instance entry in the
+      NHIB.  Frequent signalling of the metric is required to keep this
+      information updated.
+
+   Although each method yields specific performance benefits, e.g.,
+   reduced latency or smooth load distribution, [OnOff2022] outlines
+   simulation-based insights into benefits for realising the compute-
+   aware solution of [CArDS2022] in ROSA.
+
+3.5.2.  Routing Across Multiple SARs
+
+   In order to send a service request to the `best' service instance
+   (among all announced ones) using a routing-based approach, we build
+   NHIB routing entries by disseminating a service instance's
+   announcement for a given service address S, arriving at its ingress
+   SAR.  This distribution may be realized via a routing protocol or a
+   central routing controller or a hybrid solution.
+
+
+
+
+Trossen, et al.          Expires 5 January 2024                [Page 19]
+
+Internet-Draft                    ROSA                         July 2023
+
+
+   If no particular constraint is given in the announcement's EH
+   Constraint field, shortest path will be realized as a default policy
+   for selecting the `best' instance, routing any client's request to S
+   the nearest service instance available.
+
+   Alternatively, selecting a service instance may use service-specific
+   policies (encoded in the Constraint field of the EH, with the
+   specific encoding details being left for future work).  Here,
+   multiple constraints may be used, with [Multi2020] providing a
+   framework to determine optimal paths for such cases, while also
+   conventional traffic engineering methods may be used.
+
+   Through utilizing the work in [Multi2020], a number of multi-criteria
+   examples can be modelled through a dominant path model, relying on a
+   partial order only, as long as isotonicity is observed.  Typical
+   examples here are widest-shortest path or shortest-widest routing
+   (see [Multi2020]), which allow for performance metrics such as
+   capacity, load, rate of requests, and others.  However, metrics such
+   as failure rate or request completion time cannot directly be
+   captured and need formulation as a max metric.  Furthermore, metrics
+   may not be isotonic, with Section 3.4 of [Multi2020] supporting those
+   cases through computing a set of dominant attributes according to the
+   largest reduction.  [Multi2020] furthermore shows that non-restarting
+   or restarting vectoring protocols may be used to compute dominant
+   paths and to distribute the routing state throughout the network.
+
+   However, the framework in [Multi2020] is limited to unicast vectoring
+   protocols, while the routing problem in ROSA requires selecting the
+   'best' path to the 'best' instance, i.e., as an anycast routing
+   problem.  To capture this, [Multi2020] could be extended through
+   introducing a (anycast) virtual node, placed at the end of a logical
+   path that extends from each service instance to the virtual node.
+   Selecting the best path (over the announced attributes of each
+   service instance) to the virtual node will now select the best
+   service instance (over which to reach the virtual node in the
+   logically extended topology).
+
+   Alternatively, ROSA routing may rely on methods for anycast routing,
+   but formulated for service instead of anycast addresses.  For
+   instance, AnyOpt [AnyOpt2021] uses a measurement-based approach to
+   predict the best (in terms of latency) anycast (i.e. service)
+   instance for a particular client.  Alternatively, approaches using
+   regular expressions may be extended towards spanning a set of
+   destinations rather than a single one.  Realizations in a routing
+   controller would likely improve on convergence time compared to a
+   distributed vector protocol; an aspect for further work to explore.
+
+
+
+
+
+Trossen, et al.          Expires 5 January 2024                [Page 20]
+
+Internet-Draft                    ROSA                         July 2023
+
+
+3.6.  Interconnection
+
+   There are two cases for interconnection: access to (i) non-ROSA
+   services in the public Internet and (ii) ROSA services not domain-
+   locally announced but existing in other domains.
+
+   For both cases, we utilize a reserved wildcard service address '*'
+   that points to a default route for any service address that is not
+   being advertised in the local domain.  This default route is the
+   service address gateway (see Figure 1), ultimately receiving the
+   service request to the locally unknown service.
+
+   Upon arriving at the SAG, it searches its local routing table for any
+   information.  If none is found, it consults the DNS to retrieve an IP
+   address where the service is hosted; those mappings could be cached
+   for improving future requests or being pre-populated for popular
+   services.
+
+   For case (i), the resolution returns a server's IP address to which
+   the SAG sends the service request with its own IP address as source
+   address.  The service response is routed back via the SAG, which in
+   turn uses the Ingress EH information to return the response to the
+   client via its ingress SAR.
+
+   For case (ii), the IP address would be that of the SAG of the ROSA
+   domain in which the service is hosted.  For this, a domain-local
+   service instance would have exposed its service, e.g., Mobile.com/
+   video Figure 1, by registering its domain-local SAG IP address with
+   the mapping service.  To suitably forward the request, the SAG adds
+   its own IP address as the value to an additional SAG label into the
+   extension header.  At the destination SAG, the service address
+   information, extracted from the extension header, is used to forward
+   the service request based on ROSA mechanisms.  For the service
+   response, the destination SAG uses the SAG entry in the EH to return
+   the response to the originating ROSA domain's SAG, which in turn uses
+   the Ingress information of the EH to return the response via the
+   ingress to the client.
+
+   Given the EH deployment issues pointed out in [SHIM2014], a UDP-based
+   encapsulation may overcome the observed issues, not relying on the EH
+   being properly observed during the traversal over the public
+   Internet.  Furthermore, while Figure 1 shows the SAG as an
+   independent component, we foresee deployments in existing PoPs.  This
+   would allow combining provisioning through frontloaded PoP-based
+   services and ROSA services.  Any service not explicitly announced in
+   the ROSA system would lead to being routed to the PoP-based SAG,
+   which may use any locally deployed services before forwarding the
+   request to the public Internet.
+
+
+
+Trossen, et al.          Expires 5 January 2024                [Page 21]
+
+Internet-Draft                    ROSA                         July 2023
+
+
+4.  Extensions to Base ROSA Capabilities
+
+   ROSA, as defined in Section 3, can be extended to address various
+   capabilities useful for specific or across a number of use cases.
+   The following provides a list of those possible extended
+   capabilities.  At this stage, we would expect those capabilities to
+   be defined in more detail in separate drafts, complementing the ROSA
+   'base' specification, as defined in this current draft.
+
+4.1.  Supporting Different Namespace Encodings
+
+   Although most of our examples assume the use of URL-based service
+   addresses, encoded using [RFC8609], supporting other, e.g., corporate
+   service, namespaces may be desired.  [RFC8609] generally supports
+   this and could thus be used.
+
+   As briefly alluded to in Section 3.2, other encodings to that
+   following [RFC8609] may be used, focussing on different ways to
+   represent a service address differently, including linking it to the
+   service name used at the application level.
+
+   One such encoding may be that of a unique service address per service
+   name, with the linkage between both provided through the DNS.  Here,
+   the client sends an initial DNS query with the URL of the purported
+   service or application.  Instead of requesting a resolution to a
+   locator, however, is the request for mapping between the URL and the
+   service address of ROSA, where the service address has been assigned
+   as part of the domain name registration (which may be done after
+   initial registration of the domain name for backward compatibility).
+   Service addresses here may be simply encoded as numerals, where
+   uniqueness is achieved through linking to the domain name
+   registration and thus DNS mapping.  Encoding in the respective EH
+   header field (see Section 3.2) would be shorter and thus more
+   efficient, still achieving the desired uniqueness in the SAR
+   forwarding process to avoid ambiguity in forwarding decisions.  The
+   drawback is the need for the additional DNS mapping step (albeit only
+   required once per application, where the service address could be
+   stored persistently for later use), while also the additional DNS
+   mapping will need standardization (likely in the form of a new DNS
+   record).
+
+   Another possible encoding, without the aforementioned explicit DNS
+   mapping step, could be to explicitly hash the service name into a
+   service address at the ROSA endpoint, operating on those hash values
+   for service announcement and requests.  Due to the large service
+   namespace, hash conflicts may, however, occur, which needs resolving
+   at the SAR (which may operate on a service address for a service
+   request for a different, but same hashed, service address of an
+
+
+
+Trossen, et al.          Expires 5 January 2024                [Page 22]
+
+Internet-Draft                    ROSA                         July 2023
+
+
+   announcement service).  Further study is needed into the probability
+   for such hash conflicts and possible mitigation methods for such
+   conflicts.
+
+   If the use of different encoding methods beyond [RFC8609] was to be
+   considered, appropriate modifications to the EH fields need to be
+   done to signal the used encoding method for the service address.
+
+4.2.  Supporting Multi-Homing of Service Instances
+
+   Multi-homed service instances may benefit from path-aware routing
+   decisions after mapping service addresses to service instance
+   addresses.  To that end, service instances would need to advertise
+   multiple instance IPs as part of their service announcement.
+
+   The optimal path may differ while a client communicates with a
+   service instance; this is in particular likely for mobile clients.
+   This provides some complication for affinity requests; in such a
+   case, the service instance IP is no longer sufficient to identify a
+   service instance, merely to locate a particular path.
+
+   Multi-homing issues in connection with aircrafts also extend to
+   Unmanned Aircraft Systems (UAS).  Rather than focusing on passenger
+   experience, multi-homing over commercial off-the-shelf (COTS)
+   communications modules such as 5G or IEEE 802.11 provides command,
+   control and communications (C3) capabilities to Unmanned Aerial
+   Vehicles (UAV; drones).  Despite the difference in focus, the
+   technical challenges in maintaining connection quality are largely
+   equivalent.
+
+   Multi-homing thus either requires an undesirable further resolution
+   step from a service instance identifier to a (optimal path) locator.
+   Alternatively, ROSA message types may be extended to include a
+   distinct service instance identifier and service instance locator
+   identifiers, i.e., IP addresses, which provides sufficient
+   information for SARs to map to specific and changing locators, while
+   retaining the affinity to the service instance by identifier.
+
+4.3.  Supporting 0-RTT TLS
+
+   TBD Dirk
+
+
+
+
+
+
+
+
+
+
+Trossen, et al.          Expires 5 January 2024                [Page 23]
+
+Internet-Draft                    ROSA                         July 2023
+
+
+4.4.  Supporting Transaction Mobility
+
+   When it comes to the transaction mobility in which the serving
+   service instance needs to be shifted to another selected alternative
+   instance, the ROSA service address could provide a good starting as
+   an location-independent ID.  Other than TCP for which the client and
+   server have to maintain strict machine state, UDP-based protocol
+   could be extended with the service address to be treated as the
+   connection ID rather than the traditional 4-tuple including the host
+   destination address when the server does not have to maintain session
+   state.  The chief gain here is the service connection could remain
+   intact when the serving service instance has been switched over at
+   ROSA level (routing plane).
+
+   As part of the ability to switch over from one service instance, ROSA
+   may explicitly support that mobility in that the choice of the (new)
+   service instance is explicitly made within the service-specific
+   traffic steering method.  For this, ROSA may introduce a separate
+   message alongside the service request message (see see Section 3.2),
+   which not only allows for the ingress SAR to perform the same routing
+   policy as if it was sent through a new service request message, but
+   may also include application-specific context data to facilitate the
+   needed application state transfer from the original service instance
+   to the new one.  Here, the in-band capability of a ROSA request is
+   being used to carry this context data as part of the new ROSA
+   message.
+
+4.5.  Supporting Service Function Chaining
+
+   Service Function Chaining (SFC) [RFC7665] allows for chaining the
+   execution of services at L2 or L3 level, targeting scenarios such as
+   carrier-grade NAT and others.  The work in [RFC8677] extends the
+   chaining onto the name level, using service names to identify the
+   individual services of the chain, even allowing combinations of name
+   and L2/L3-based chains.
+
+   Although [RFC8677] is tied into a realization of the SFF (service
+   function forwarder) using a path-based forwarding approach, the
+   concept of name-based SFCs can equally be realized utilizing ROSA.
+
+4.6.  Supporting Privacy-Compliant Communication
+
+   The exposure of service-related information in the ROSA EHs may be
+   seen as a privacy issue, particularly when utilizing the service name
+   as the basis for the service address formulation.  Although Section 8
+   outlines the possible use of service categories (instead of finer-
+   grained service names) as input into the service address formulation,
+   it is also desirable to protect the privacy of fine-grained service
+
+
+
+Trossen, et al.          Expires 5 January 2024                [Page 24]
+
+Internet-Draft                    ROSA                         July 2023
+
+
+   address information, should the specific ROSA deployment make use of
+   them.
+
+   Beyond using encryption methods to protect the ROSA EH information,
+   such privacy methods could also include the obfuscation of client and
+   transit information as well, thus moving into the space of routing
+   privacy, as outlined for instance in
+   [I-D.ip-address-privacy-considerations]
+
+5.  Prototype-based Insights
+
+   To come before IETF118 with description of planned demo to
+   demonstrate some of the benefits for using ROSA.
+
+6.  Open Issues
+
+   There are a number of open issues with the following list providing a
+   non-exhaustive list of examples:
+
+   1  A ROSA control plane is required for handling aspects of ingress
+      SAR discovery and signalling of service instance announcements to
+      the ROSA network, either to ingress SARs only (for services
+      utilizing traffic scheduling mode) or across all domain-internal
+      SARs.  Here, the signalling for achieving interconnections, based
+      on the methods outlined in Section 3.6, is also required to be
+      specified.
+
+   2  Prototypical but also possibly simulation-based insights into
+      benefits are desirable to motivate the adoption of ROSA.
+
+7.  Conclusions
+
+   This draft outlined an architecture for service-specific traffic
+   steering as an alternative to existing service-based routing methods
+   that use explicit resolution steps.  Instead, the architecture
+   presented in this document advocates an approach of in-band
+   signalling of service addresses, possibly carried across IPv6 EH-
+   based shim overlay, followed by the IPv6-based transfer of subsequent
+   packets in similarity to existing SBR methods.  The architecture
+   suggests to employ routing and ingress scheduling based methods to
+   provide the desired dynamicity of anycast decisions that are outlined
+   as desirable for the use cases in [I-D.mendes-rtgwg-rosa-use-cases].
+
+   As next steps, we plan on extending various aspects of the ROSA
+   operations, e.g., describing control plane aspects such as SAR
+   discovery as well as a possible routing protocol.  We expect that
+   some of those aspects, such as for a ROSA control plane, are captured
+   in separate works.
+
+
+
+Trossen, et al.          Expires 5 January 2024                [Page 25]
+
+Internet-Draft                    ROSA                         July 2023
+
+
+   We furthermore have plans on bringing an eBPF-based prototypical
+   realization of the forwarding behaviour in Section 3.4 to future IETF
+   events, e.g., for a hackathon participation to showcase ROSA-based
+   applications in a test setup.
+
+8.  Security Considerations
+
+   Aligned with security considerations in existing service provisioning
+   systems, we address aspects related to authenticity, i.e., preventing
+   fake service announcements, confidentiality, both in securing
+   relationship as well as payload information, and operational
+   integrity.
+
+   *  Announcement security: A key exchange between service and network
+      provider may be used to secure the service announcement for
+      ensuring an authorized announcement of services.  Self-certifying
+      identifiers could be used for this purpose
+
+   *  Relationship security: Using service addresses at the routing
+      layer poses not just a privacy but possibly also a net neutrality
+      problem, allowing for non-ROSA elements to discriminate against
+      specific service addresses.  Similar to
+      [I-D.per-app-networking-considerations], service addresses could
+      reflect service categories, not services themselves.  Service
+      endpoints to those category-level services can use information in
+      the secured payload (e.g., the URL in an HTTP-based service
+      invocation) to direct the traffic accordingly.  The downside of
+      such model is a possible convergence towards a PoP-like model of
+      service provisioning, since exposing an entire service category
+      naturally requires provisioning many possible services under that
+      category, likely favouring large-scale providers over smaller
+      ones; an imbalance that ROSA intends to change, not favour.  Work
+      on identity privacy in ILNP [ILNP2021] has shown that ephemeral
+      identifiers may increase the private nature of the communication
+      relation; a direction that needs further exploration in the
+      context of our work.  Also, the service address in the extension
+      header could be encrypted, based on a key exchange during the SAR
+      discovery.  However, the impact of such mechanism would need
+      further study.
+
+   *  Transport-level security: Given the often sensitive nature of
+      service requests, payload security is key.  We adopt techniques
+      used in TLSV1.3 [RFC8446], providing a 1-RTT handshake for
+      communication between formerly untrusted parties.  While the
+      initial 'Client Hello' is sent as a service request, the
+      subsequent communication uses the topological address of the
+      responding server in an affinity request.  Using pre-shared keys
+      may allow for communication between trusted client and service
+
+
+
+Trossen, et al.          Expires 5 January 2024                [Page 26]
+
+Internet-Draft                    ROSA                         July 2023
+
+
+      instances, e.g., where the client is provided by the service
+      authority and preconfigured with a pre-shared key.  This results
+      in a 0-RTT handshake with the 'Client Hello' including the initial
+      service data, encrypted with the pre-shared key.  This comes with
+      known forward-secrecy issues and should be avoided in networks
+      with untrusted intermediary nodes.  Alternatively, the service's
+      public key could encrypt the initial security handshake, akin to
+      the solutions proposed for Encrypted Client Hello (ECH), using the
+      DNS for obtaining the public key.
+
+   *  Bandwidth DoS: We assume network provider level mechanisms to
+      restrict traffic injected both by the service provider and client,
+      including for the number of service advertisements in order to
+      control the routing traffic.
+
+   *  Denying routing service: A SAR could maliciously deny forwarding
+      of client requests, which is no different from denying IP packet
+      forwarding.  In both cases, we assume an existing commercial
+      relationship that avoids such situation.
+
+9.  Privacy Considerations
+
+   The exposure of service-related information in the ROSA EHs may be
+   seen as a privacy issue, particularly when utilizing the service name
+   as the basis for the service address formulation.  As discussed in
+   Section 4.6, extensions to the base ROSA capabilities may address
+   this issue to ensure the privacy of the clients' communication
+   relations in ROSA deployments, where needed.
+
+10.  IANA Considerations
+
+   This draft does not request any IANA action.
+
+11.  Acknowledgements
+
+   Many thanks go to Ben Schwartz, Luigi Iannone, Mohamed Boucadair,
+   Tommy Pauly, Joel Halpern, Daniel Huang, and Russ White for their
+   comments to the text to clarify several aspects of the motiviation
+   for and technical details of ROSA.
+
+12.  Informative References
+
+   [AnyOpt2021]
+              Zhang, Z., April, T., Chandrasekaran, B., Choffnes, D.,
+              Maggs, B. M., Shen, H., Sitaraman, R. K., Yang, X., Zhang,
+              X., and T. Sen, "AnyOpt: predicting and optimizing IP
+              Anycast performance", Paper ACM SIGCOMM, 2021.
+
+
+
+
+Trossen, et al.          Expires 5 January 2024                [Page 27]
+
+Internet-Draft                    ROSA                         July 2023
+
+
+   [CArDS2022]
+              Khandaker, K., Trossen, D., Khalili, R., Despotovic, Z.,
+              Hecker, A., and G. Carle, "CArDS:Dealing a New Hand in
+              Reducing Service Request Completion Times", Paper IFIP
+              Networking, 2022.
+
+   [eBPF]     "What is eBPF?", Technical Report eBPF Foundation, 2022,
+              <https://ebpf.io/what-is-ebpf/>.
+
+   [GSLB]     "What is GSLB?", Technical Report Efficient IP, 2022,
+              <https://www.efficientip.com/what-is-gslb/>.
+
+   [I-D.eip-arch]
+              Salsano, S., ElBakoury, H., and D. Lopez, "Extensible In-
+              band Processing (EIP) Architecture and Framework", Work in
+              Progress, Internet-Draft, draft-eip-arch-02, 19 June 2023,
+              <https://datatracker.ietf.org/doc/html/draft-eip-arch-02>.
+
+   [I-D.huang-service-aware-network-framework]
+              Huang, D., Tan, B., and D. Yang, "Service Aware Network
+              Framework", Work in Progress, Internet-Draft, draft-huang-
+              service-aware-network-framework-01, 22 November 2022,
+              <https://datatracker.ietf.org/doc/html/draft-huang-
+              service-aware-network-framework-01>.
+
+   [I-D.ietf-quic-load-balancers]
+              Duke, M., Banks, N., and C. Huitema, "QUIC-LB: Generating
+              Routable QUIC Connection IDs", Work in Progress, Internet-
+              Draft, draft-ietf-quic-load-balancers-16, 21 April 2023,
+              <https://datatracker.ietf.org/doc/html/draft-ietf-quic-
+              load-balancers-16>.
+
+   [I-D.ip-address-privacy-considerations]
+              Finkel, M., Lassey, B., Iannone, L., and B. Chen, "IP
+              Address Privacy Considerations", Work in Progress,
+              Internet-Draft, draft-ip-address-privacy-considerations-
+              03, 10 January 2022,
+              <https://datatracker.ietf.org/doc/html/draft-ip-address-
+              privacy-considerations-03>.
+
+   [I-D.ma-intarea-encapsulation-of-san-header]
+              Ma, L., Zhao, D., Zhou, F., and D. Yang, "Encapsulation of
+              SAN Header", Work in Progress, Internet-Draft, draft-ma-
+              intarea-encapsulation-of-san-header-00, 23 October 2022,
+              <https://datatracker.ietf.org/doc/html/draft-ma-intarea-
+              encapsulation-of-san-header-00>.
+
+
+
+
+
+Trossen, et al.          Expires 5 January 2024                [Page 28]
+
+Internet-Draft                    ROSA                         July 2023
+
+
+   [I-D.mendes-rtgwg-rosa-use-cases]
+              Mendes, P., Finkhaeuser, J., Contreras, L. M., and D.
+              Trossen, "Use Cases and Problem Statement for Routing on
+              Service Addresses", Work in Progress, Internet-Draft,
+              draft-mendes-rtgwg-rosa-use-cases-00, 26 June 2023,
+              <https://datatracker.ietf.org/api/v1/doc/document/draft-
+              mendes-rtgwg-rosa-use-cases/>.
+
+   [I-D.per-app-networking-considerations]
+              Colitti, L. and T. Pauly, "Per-Application Networking
+              Considerations", Work in Progress, Internet-Draft, draft-
+              per-app-networking-considerations-00, 15 November 2020,
+              <https://datatracker.ietf.org/doc/html/draft-per-app-
+              networking-considerations-00>.
+
+   [ILNP2021] Yanagida, R., Bhatti, S., and G. Haywood, "End-to-end
+              privacy for identity and location with IP", Paper 2nd
+              Workshop on New Internetworking Protocols, Architecture
+              and Algorithms, 29th IEEE International Conference on
+              Network Protocols, 2021.
+
+   [Multi2020]
+              Ferreira, M. A. and J. L. Sobrinho, "Routing on Multi
+              Optimality Criteria", Paper ACM SIGCOMM, 2020.
+
+   [OnOff2022]
+              Khandaker, K., Trossen, D., Yang, J., Despotovic, Z., and
+              G. Carle, "On-path vs Off-path Traffic Steering, That Is
+              The Question", Paper ACM SIGCOMM workshop on Future of
+              Internet Routing and Addressing (FIRA), 2022.
+
+   [RFC7231]  Fielding, R., Ed. and J. Reschke, Ed., "Hypertext Transfer
+              Protocol (HTTP/1.1): Semantics and Content", RFC 7231,
+              DOI 10.17487/RFC7231, June 2014,
+              <https://www.rfc-editor.org/info/rfc7231>.
+
+   [RFC7665]  Halpern, J., Ed. and C. Pignataro, Ed., "Service Function
+              Chaining (SFC) Architecture", RFC 7665,
+              DOI 10.17487/RFC7665, October 2015,
+              <https://www.rfc-editor.org/info/rfc7665>.
+
+   [RFC8200]  Deering, S. and R. Hinden, "Internet Protocol, Version 6
+              (IPv6) Specification", STD 86, RFC 8200,
+              DOI 10.17487/RFC8200, July 2017,
+              <https://www.rfc-editor.org/info/rfc8200>.
+
+
+
+
+
+
+Trossen, et al.          Expires 5 January 2024                [Page 29]
+
+Internet-Draft                    ROSA                         July 2023
+
+
+   [RFC8446]  Rescorla, E., "The Transport Layer Security (TLS) Protocol
+              Version 1.3", RFC 8446, DOI 10.17487/RFC8446, August 2018,
+              <https://www.rfc-editor.org/info/rfc8446>.
+
+   [RFC8484]  Hoffman, P. and P. McManus, "DNS Queries over HTTPS
+              (DoH)", RFC 8484, DOI 10.17487/RFC8484, October 2018,
+              <https://www.rfc-editor.org/info/rfc8484>.
+
+   [RFC8609]  Mosko, M., Solis, I., and C. Wood, "Content-Centric
+              Networking (CCNx) Messages in TLV Format", RFC 8609,
+              DOI 10.17487/RFC8609, July 2019,
+              <https://www.rfc-editor.org/info/rfc8609>.
+
+   [RFC8677]  Trossen, D., Purkayastha, D., and A. Rahman, "Name-Based
+              Service Function Forwarder (nSFF) Component within a
+              Service Function Chaining (SFC) Framework", RFC 8677,
+              DOI 10.17487/RFC8677, November 2019,
+              <https://www.rfc-editor.org/info/rfc8677>.
+
+   [RFC8949]  Bormann, C. and P. Hoffman, "Concise Binary Object
+              Representation (CBOR)", STD 94, RFC 8949,
+              DOI 10.17487/RFC8949, December 2020,
+              <https://www.rfc-editor.org/info/rfc8949>.
+
+   [RFC9299]  Cabellos, A. and D. Saucez, Ed., "An Architectural
+              Introduction to the Locator/ID Separation Protocol
+              (LISP)", RFC 9299, DOI 10.17487/RFC9299, October 2022,
+              <https://www.rfc-editor.org/info/rfc9299>.
+
+   [SarNet2021]
+              Glebke, R., Trossen, D., Kunze, I., Lou, Z., Rueth, J.,
+              Stoffers, M., and K. Wehrle, "Service-based Forwarding via
+              Programmable Dataplanes", Paper 1st Intl Workshop on
+              Semantic Addressing and Routing for Future Networks, 2021.
+
+   [SHIM2014] Naderi, H. and B. Carpenter, "Putting SHIM6 into
+              practice", Paper 2014 Australasian Telecommunication
+              Networks and Applications Conference (ATNAC), 2014.
+
+   [SOI2020]  Jiang, S., Li, G., and B. Carpenter, "A New Approach to a
+              Service Oriented Internet Protocol", Paper IEEE INFOCOM
+              2020 - IEEE Conference on Computer Communications
+              Workshops (INFOCOM WKSHPS), 2020.
+
+
+
+
+
+
+
+
+Trossen, et al.          Expires 5 January 2024                [Page 30]
+
+Internet-Draft                    ROSA                         July 2023
+
+
+   [TS23501]  "System architecture for the 5G System (5GS); Stage 2
+              (Release 16)", Technical Report 3GPP TS 23.501 V16.11.0
+              (2021-12), 2021,
+              <https://portal.3gpp.org/desktopmodules/Specifications/
+              SpecificationDetails.aspx?specificationId=3144>.
+
+Authors' Addresses
+
+   Dirk Trossen
+   Huawei Technologies
+   80992 Munich
+   Germany
+   Email: dirk.trossen@huawei.com
+   URI:   https://www.dirk-trossen.de
+
+
+   Luis M. Contreras
+   Telefonica
+   Ronda de la Comunicacion, s/n
+   Sur-3 building, 1st floor
+   28050 Madrid
+   Spain
+   Email: luismiguel.contrerasmurillo@telefonica.com
+   URI:   http://lmcontreras.com/
+
+
+   Jens Finkhaeuser
+   Interpeer gUG
+   86926 Greifenberg
+   Germany
+   Email: ietf@interpeer.io
+   URI:   https://interpeer.io/
+
+
+   Paulo Mendes
+   Airbus
+   82024 Taufkirchen
+   Germany
+   Email: paulo.mendes@airbus.com
+   URI:   http://www.airbus.com
+
+
+
+
+
+
+
+
+
+
+
+Trossen, et al.          Expires 5 January 2024                [Page 31]
